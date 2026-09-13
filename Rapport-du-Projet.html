@@ -1,0 +1,387 @@
+<DOCTYPE html>
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Rapport du projet TP Keyloak</title>
+</head>
+<body>
+
+
+	<strong>Aliou Ba, ing 2 informatique, P33 2</strong>
+	<p>Voici le sommaire du </p>
+	<ul>
+		<li><a href="#33">Question Rapport - Q1: Comprendre OAuth2</a></li>
+		<li><a href="#2">Question Rapport - Q2: Keycloak et JWT</a></li>
+		<li><a href="#3">Question Rapport - Q3: Sécurité des Services </a></li>
+		<li><a href="#4">Question Rapport - Q4: API Gateway et securite</a></li>
+		<li><a href="#5">Question Rapport - Q5: Question de synthèse du rapport</a></li>
+		<li><a href="#6">Question Rapport - Q6: Architecture et securite</a></li>
+		<li><a href="#7">Question Rapport - Q7: Keycloak en profendeur</a></li>
+		<li><a href="#8">Question Rapport - Q8: Microservice et SOA</a></li>
+		<li><a href="#9">Question Rapport - Q9: Service Discovery et Consul</a></li>
+		<li><a href="#10">Question Rapport - Q19: Observabilité et Tracing</a></li>
+	</ul>
+	
+	<br>
+	<hr>
+
+	<h3 id="2"><strong>Question Rapport - Q2</strong></h3>
+	<ol>
+		<li id="21">En observant le payload, on peut identifier et expliquer au moins 5 champs:
+			<ul>
+				<li><strong>exp</strong>: expiration du token, exprimée en secondes depuis l’époque Unix. C’est la date/heure à laquelle le token cesse d’être valide.</li>
+				<li><strong> iat </strong> : issued at, moment où le token a été émis.</li>
+				<li><strong>iss: </strong> issuer, l’autorité qui a généré le token (ici ton serveur Keycloak, http://localhost:8180/realms/tp-microservices).</li>
+				<li><strong>aud</strong>: audience, la cible prévue du token (ici account).</li>
+				<li><strong>sub</strong> : subject, identifiant unique de l’utilisateur (UUID).</li>
+			</ul>
+		</li>
+		<li id="22">Le champ exp indique la date d’expiration. <br>
+		Dans notre exemple, il est fixé à 1780925386 (timestamp Unix). 
+		Cela correspond à environ 5 minutes après l’émission (iat).
+		<br>
+		Pour modifier cette durée dans Keycloak :
+		<br>
+		On Va dans <strong>Clients → [ton client] → Settings.</strong>
+		<br>
+		Dans la section Advanced Settings, on change la valeur Access Token Lifespan.
+		<br>
+		On peux aussi ajuster la durée du Refresh Token dans <strong>Realm Settings → Tokens.</strong></li>
+		<li id="23">
+		<ul>
+			<li>Alice peut avoir des rôles comme ROLE_USER.</li>
+			<li>Bob dans ton exemple a des rôles supplémentaires (ROLE_ADMIN, offline_access, uma_authorization).</li>
+		</ul>
+
+		<br>La différence est que Bob a des privilèges administratifs et des autorisations élargies, alors qu’Alice n’a que des rôles standards. Cela reflète la gestion des permissions dans Keycloak.</li>
+		<li id="24">
+			<ul>
+				<li>Un token expiré renvoie 401 Unauthorized.</li>
+				<li>Pour éviter de ressaisir le mot de passe, on utilise le refresh token.</li>
+				<li>Il est fourni en même temps que l’access token.</li>
+				<li>On l’envoie à /protocol/openid-connect/token avec grant_type=refresh_token.</li>
+			</ul>
+		</li>
+	</ol>
+
+	<h2 id="3"><bold>Q3</bold> Sécurité des Services</h2>
+	<ol>
+		<li>
+			<p>Spring Security intercepte la requête avant qu'elle atteigne le contrôleur. <br> Comme aucun token JWT n'est présent dans l'en-tête Authorization, le filtre OAuth2 Resource Server rejette la requête immédiatement avec un 401.</p>
+		</li>
+		<li>
+			<p>Avec le token d'Alice (ROLE_USER uniquement), un appel PUT /inventaire/1 retourne HTTP 403 Forbidden.<br> La requête passe le premier filtre HTTP (Alice a bien ROLE_USER), mais @PreAuthorize("hasRole('ADMIN')") sur la méthode mettreAJour() refuse l'accès car Alice n'a pas ROLE_ADMIN. C'est le deuxième niveau de sécurité qui bloque.</p>
+		</li>
+		<li>
+			hasRole('ADMIN') et hasAuthority('ROLE_ADMIN') sont équivalents en pratique. La différence est que hasRole() ajoute automatiquement le préfixe ROLE_ avant de comparer — donc hasRole('ADMIN') cherche en interne ROLE_ADMIN. Avec hasAuthority(), il faut écrire le nom complet ROLE_ADMIN soi-même. Dans notre JwtRoleConverter, on préfixe déjà les rôles avec ROLE_, donc les deux fonctionneront. hasRole() est plus lisible, hasAuthority() est plus explicite.
+		</li> <br>
+		<li>
+			Valider uniquement à la Gateway crée un single point of failure de sécurité. Si un service est accessible directement (accès réseau interne, bug de configuration, autre route), il n'y a plus aucune protection. En validant dans chaque service, même si la Gateway est contournée, le service refuse les requêtes non autorisées. Scénario critique : un développeur teste directement https://localhost:8083/inventaire/1 en PUT sans passer par la Gateway — sans validation locale, il peut modifier le stock sans être ADMIN.
+		</li>
+	</ol>
+
+	<h2>Etape 3: API Gateway sécurisée</h2>
+	<h3>6.1 Configuration du projet api-gateway</h3>
+
+	<h2 id="4">Question Rapport - Q4: API Gateway et securite </h2>
+	<ol>
+		<li>Le filtre TokenRelay= récupère le token JWT présent dans l'en-tête Authorization: Bearer ... de la requête entrante, et le recopie automatiquement dans la requête transmise au service en aval. Sans lui, les services recevraient des requêtes sans token et retourneraient 401. Il est indispensable car la Gateway est le seul point d'entrée — les services ne reçoivent le token que si la Gateway le propage</li>
+		<li>oauth2-resource-server : permet à la Gateway de valider le JWT entrant du client (vérifier la signature, l'expiration, les droits). C'est le rôle "serveur de ressources".
+		oauth2-client : permet à la Gateway de s'authentifier elle-même auprès de Keycloak si besoin (flux client_credentials pour des appels inter-services). C'est aussi ce qui permet au filtre TokenRelay de fonctionner correctement avec le contexte de sécurité réactif.</li>
+		<li>C'est la Gateway qui répond avec HTTP 401. Keycloak n'est pas contacté. La Gateway vérifie localement la présence et la validité du token (via la clé publique Keycloak téléchargée au démarrage). Si aucun token n'est fourni, la Gateway rejette immédiatement sans aucune communication avec Keycloak.</li>
+		<li>
+			<ol>
+				<li>Bob → Keycloak : Bob s'authentifie, Keycloak retourne un JWT signé contenant ROLE_USER et ROLE_ADMIN </li>
+
+				<li>Bob → Gateway (:8080) : Bob envoie PUT /api/inventaire/1?quantite=50 avec Authorization: Bearer </li>
+
+				<li>Gateway : valide la signature du JWT (clé publique Keycloak), vérifie que l'utilisateur est authentifié → OK</li>
+
+				<li>Gateway → Service Inventaire (:8083) : filtre TokenRelay propage le token, StripPrefix transforme /api/inventaire/1 en /inventaire/1</li>
+
+				<li>Service Inventaire : valide à nouveau le JWT, vérifie hasRole('USER') → OK, puis @PreAuthorize("hasRole('ADMIN')") → Bob a ROLE_ADMIN → OK </li>
+
+				<li>Service Inventaire → Bob : retourne HTTP 200 avec le stock mis à jour </li>
+			</ol>
+		</li>
+	</ol>
+
+
+	<h2 id="5">Etape 4: Scenarios de test complets</h2>
+	<h3>7.1 Démarrage de tous les composants</h3>
+	<p>Je démarre tous les composants directement sur intellij</p>
+	<img src="images/19.png" width="450" height="100" >
+
+	<ol>
+		<li>
+			<h3> Scénario A - Alice consulte les produits </h3>
+			<img src="images/24.png" width="400" height="100">
+			<p>Scénario A (200) : Alice a ROLE_USER, GET /produits l'exige → accès accordé</p>
+
+
+			<h3> Scénario B - Bob met à jour le stock </h3>
+			<img src="images/26.png" width="400" height="100">
+			<p>Scénario B (200) : Bob a ROLE_ADMIN, PUT /inventaire l'exige → accès accordé</p>
+
+
+			<h3> Scénario C Alice essaie de modifier le stock </h3>
+			<img src="images/27.png" width="400" height="100">
+			<p>Scénario C (403) : Alice a ROLE_USER mais PUT /inventaire exige ROLE_ADMIN → refus d'autorisation</p>
+
+			<h3> Scénario D </h3>
+			<img src="images/28.png" width="400" height="100">
+			<p>Scénario D (401) : aucun token fourni → la Gateway refuse avant tout traitement</p>
+
+			<h3> Scénario E - Service tombe, fallback active </h3>
+			<img src="images/29.png" width="400" height="150">
+			<p>Scénario E (503) : le service est down, après 5 échecs le circuit breaker s'ouvre et retourne le fallback</p>
+
+		</li>
+		<li>
+			<p><strong>C'est la Gateway qui retourne le 401.</strong> Le Service Produits n'est jamais contacté.</p>
+
+			<h3>Comment le vérifier :</h3>
+
+			<pre>
+			# Appel sans token via Gateway
+			curl -v http://localhost:8080/api/produits
+
+			# Appel direct au service (sans Gateway) — aussi 401 mais indépendamment
+			curl -v http://localhost:8081/produits
+			</pre>
+
+			<p>Les logs du <strong>Service Produits</strong> ne montrent aucune requête reçue lors du scénario D via Gateway.</p>
+		</li>
+		<li>
+			<strong>HTTP 401 Unauthorized </strong>: l'utilisateur n'est pas identifié — aucun token, token expiré, token invalide. "Qui êtes-vous ?" <br>
+			<strong>HTTP 403 Forbidden :</strong> l'utilisateur est identifié mais n'a pas les droits pour cette ressource. "Je sais qui vous êtes, mais vous n'avez pas accès." <br>
+
+			Dans ce TP : 401 → appel sans token (scénario D) / 403 → Alice tente PUT inventaire sans <strong>ROLE_ADMIN</strong> (scénario C).
+		</li>
+		<li>
+			10 secondes. <br>C'est la configuration waitDurationInOpenState: 10s dans application.yml de la Gateway. <br>Après 10s, le circuit passe en état HALF-OPEN et laisse passer une requête test. Si elle réussit, le circuit se referme (CLOSED). Si elle échoue, il reste OPEN 10s de plus.
+		</li>
+	</ol>
+
+	<p>
+		Je capture les services sur Consul
+	</p>
+	<img src="images/23.png" width="700" height="350">
+
+	<h2 id="5">Question de synthèse du rapport</h2>
+	<ol>
+		<li>
+			<p>Dessin de l'architecture avec Napkin</p>
+			<img src="images/Architecture.png" width="500" height="550">
+		</li>
+		<li>
+			<p>Approche A vs Approche B</p>
+			<table border="1">
+				<th></th>
+				<th>Approche A</th>
+				<th>Approche B</th>
+				<tr>
+					<th>Avantage</th>
+					<th>Simplicité, un seul endroit à configurer</th>
+					<th>Sécurité en profondeur (appelé defense-in-depth)</th>
+				</tr>
+				<tr>
+					<td>Risque</td>
+					<td>Si un service est accessible directement, aucune protection</td>
+					<td>Configuration dupliquée, plus complexe</td>
+				</tr>
+			</table>
+		</li>
+		<li>Le refresh token est un token de longue durée (ex: 30 minutes à plusieurs heures) retourné avec l'access token. Quand l'access token expire (5 minutes par défaut dans Keycloak), le client envoie le refresh token à Keycloak pour obtenir un nouvel access token sans redemander le mot de passe. L'utilisateur reste connecté de façon transparente.</li>
+		<li>Le payload d'un JWT est simplement encodé en Base64, pas chiffré. N'importe qui interceptant le token peut lire son contenu. La signature garantit l'intégrité (personne ne peut le modifier) mais pas la confidentialité.
+		Ne jamais mettre dans un JWT : mot de passe, numéro de carte bancaire, données médicales, informations personnelles sensibles (RGPD). On y met uniquement : identifiant utilisateur, rôles, email — des données non sensibles nécessaires à l'autorisation.</li>
+	</ol>
+
+	<h2>Keycloak en profondeur</h2>
+	<ol>
+		<li>
+			Realm role : global à tout le realm, visible par tous les clients. Ex: ROLE_USER, ROLE_ADMIN dans ce TP.<br>
+			Client role : spécifique à un seul client OAuth2. Ex: gateway-client:read-only.
+			<br>
+			Utiliser Realm role quand le rôle est partagé entre plusieurs services. Utiliser Client role quand le rôle est propre à une seule application (ex: rôle editor uniquement dans un CMS).
+		</li>
+		<li>Dans Keycloak : Users → sélectionner l'utilisateur → Sessions → Sign out all sessions. Cela invalide les sessions actives et les refresh tokens.
+		Limite avec les JWT : les access tokens déjà émis restent valides jusqu'à leur expiration (5 min par défaut) car les services les vérifient localement sans contacter Keycloak. Pour une révocation immédiate, il faut soit réduire la durée des tokens, soit implémenter une liste noire (token introspection endpoint).</li>
+		<li>
+			<ol type="a">
+				<li>Application web avec interface de connexion → Authorization Code Flow (avec PKCE). L'utilisateur est redirigé vers Keycloak, s'authentifie, puis est redirigé vers l'app avec un code.</li>
+				<li>Communication serveur-à-serveur → Client Credentials Flow. Pas d'utilisateur impliqué, le service s'authentifie avec son client_id + client_secret.</li>
+				<li>Tests en ligne de commande (ce TP) → Resource Owner Password Flow. L'utilisateur envoie directement son login/password. Simple pour les tests, déconseillé en production.</li>
+			</ol>
+		</li>
+		<li>
+			<ul>
+				<li>Plusieurs instances Keycloak derrière un load balancer (ex: Nginx, HAProxy)</li>
+				<li>Base de données partagée et répliquée (PostgreSQL en cluster)</li>
+				<li>Sessions partagées via Infinispan (cache distribué intégré à Keycloak)</li>
+				<li>Déploiement sur Kubernetes avec plusieurs replicas et health checks</li>
+				<li>Certificats SSL/TLS sur le load balancer</li>
+			</ul>
+		</li>
+	</ol>
+
+	<h2>Q8  Microservices et SOA</h2>
+
+<h3>Q8.1 Comparaison avec le TP précédent (SOA + GraphQL)</h3>
+
+<ul>
+    <li>Commun : API Gateway comme point d'entrée unique, services REST indépendants, circuit breaker Resilience4j.</li>
+    <li>Nouveau dans ce TP : Keycloak SSO, JWT, TokenRelay, Consul pour le service discovery et Zipkin pour le tracing distribué.</li>
+    <li>Le TP précédent utilisait des URLs codées en dur ; ici Consul gère la découverte dynamiquement.</li>
+</ul>
+
+<h3>Q8.2 Communication inter-service synchrone vs asynchrone ?</h3>
+
+<p>
+La communication HTTP REST est synchrone : le service appelant attend la réponse avant de continuer.
+Si le service appelé est lent ou indisponible, l'appelant est bloqué.
+</p>
+
+<p>
+Une alternative consiste à utiliser un broker de messages comme Kafka ou RabbitMQ.
+Le Service Inventaire publie un événement et le Service Produits le consomme lorsqu'il est disponible.
+</p>
+
+<h3>Q8.3 Intégrer un Service Notifications</h3>
+
+<ul>
+    <li>Port : 8084</li>
+    <li>Sécurité : OAuth2 Resource Server avec ROLE_USER</li>
+    <li>Communication : Kafka ou RabbitMQ</li>
+    <li>Enregistrement dans Consul : service-notifications</li>
+</ul>
+
+<pre>
+id: route-notifications
+uri: lb://service-notifications
+
+predicates:
+  - Path=/api/notifications/**
+
+filters:
+  - StripPrefix=1
+  - TokenRelay=
+</pre>
+
+<h3>Q8.4 Monolithe sécurisé vs microservices sécurisés</h3>
+
+<p>
+Dans un monolithe, il existe un seul point d'entrée et une surface d'attaque réduite.
+</p>
+
+<p>
+Dans une architecture microservices, chaque service expose potentiellement son propre port.
+C'est pourquoi chaque service doit valider le JWT même si la Gateway l'a déjà vérifié.
+</p>
+
+<h2>Q9 Service Discovery et Consul</h2>
+
+<h3>Q9.1 Client-side vs Server-side discovery ?</h3>
+
+<ul>
+    <li><b>Client-side :</b> le client interroge Consul et choisit l'instance.</li>
+    <li><b>Server-side :</b> un proxy ou load balancer effectue cette tâche.</li>
+</ul>
+
+<h3>Q9.2 Qui interroge Consul ?</h3>
+
+<p>
+La Gateway interroge Consul via Spring Cloud LoadBalancer lorsqu'elle rencontre
+une URL de type <code>lb://service-produits</code>.
+</p>
+
+<h3>Q9.3 Capture Consul</h3>
+
+<img src="images/23.png" width="500" height="250">
+
+<pre>
+http://localhost:8500
+
+Services :
+- api-gateway
+- service-produits
+- service-commandes
+- service-inventaire
+</pre>
+
+<h3>Q9.4 Temps de détection d'un service down</h3>
+
+<p>
+Consul détecte généralement la panne après environ 10 secondes,
+selon la configuration du health check.
+</p>
+
+<h3>Q9.5 Avantages de lb://service-produits</h3>
+
+<ul>
+    <li>Répartition automatique de charge.</li>
+    <li>Mise à jour automatique des adresses via Consul.</li>
+    <li>Aucune URL codée en dur.</li>
+</ul>
+
+<h2>Q10 Observabilité et Tracing</h2>
+
+<h3>Q10.1 Log vs Métrique vs Trace</h3>
+
+<ul>
+    <li><b>Log :</b> événement précis à un instant donné.</li>
+    <li><b>Métrique :</b> données chiffrées agrégées.</li>
+    <li><b>Trace :</b> parcours complet d'une requête entre services.</li>
+</ul>
+
+<h3>Q10.2 TraceId</h3>
+
+<p>
+Le TraceId est un identifiant unique attribué à une requête.
+Il est propagé via les en-têtes HTTP B3.
+</p>
+
+<pre>
+X-B3-TraceId: abc123def456
+X-B3-SpanId: 111aaa222bbb
+</pre>
+
+<h3>Q10.3 Observer une trace dans Zipkin</h3>
+
+<pre>
+curl -H "Authorization: Bearer TOKEN" \
+http://localhost:8080/api/inventaire/1
+
+Puis ouvrir :
+http://localhost:9411
+</pre>
+
+<img src="images/31.png" width="500" height="250">
+
+<p>
+La trace montre le passage de la requête à travers la Gateway puis le Service Inventaire.
+</p>
+
+<h3>Q10.4 Pourquoi sampling.probability: 1.0 uniquement en développement ?</h3>
+
+<p>
+Avec une valeur de 1.0, toutes les requêtes sont tracées.
+Cela augmente la consommation CPU, réseau et stockage.
+En production, on utilise généralement entre 1 % et 10 %.
+</p>
+
+<h3>Q10.5 Investiguer une lenteur avec Zipkin</h3>
+
+<ol>
+    <li>Filtrer les traces concernées.</li>
+    <li>Trier par durée.</li>
+    <li>Ouvrir les traces lentes.</li>
+    <li>Identifier le span le plus long.</li>
+    <li>Comparer avec des traces normales.</li>
+    <li>Corréler avec les logs grâce au TraceId.</li>
+</ol>
+
+</body>
+</html>

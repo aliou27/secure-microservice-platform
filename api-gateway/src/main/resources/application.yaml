@@ -1,0 +1,101 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8180/realms/tp-microservices
+      client:
+        registration:
+          keycloak:
+            client-id: gateway-client
+            client-secret: UENxZ7xWL1e4jfOZsByOHBFu9blTAKBa
+            authorization-grant-type: client_credentials
+        provider:
+          keycloak:
+            issuer-uri: http://localhost:8180/realms/tp-microservices
+  cloud:
+    consul:
+      host: localhost
+      port: 8500
+      discovery:
+        service-name: api-gateway
+        health-check-path: /actuator/health
+        health-check-interval: 10s
+    gateway:
+      routes:
+        - id: route-produits
+          uri: lb://service-produits
+          predicates:
+            - Path=/api/produits/**
+          filters:
+            - StripPrefix=1
+            - TokenRelay=
+            - name: CircuitBreaker
+              args:
+                name: cb-produits
+                fallbackUri: forward:/fallback/produits
+
+        - id: route-commandes
+          uri: lb://service-commandes
+          predicates:
+            - Path=/api/commandes/**
+          filters:
+            - StripPrefix=1
+            - TokenRelay=
+            - name: CircuitBreaker
+              args:
+                name: cb-commandes
+                fallbackUri: forward:/fallback/commandes
+
+        - id: route-inventaire
+          uri: lb://service-inventaire
+          predicates:
+            - Path=/api/inventaire/**
+          filters:
+            - StripPrefix=1
+            - TokenRelay=
+            - name: CircuitBreaker
+              args:
+                name: cb-inventaire
+                fallbackUri: forward:/fallback/inventaire
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway,metrics
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+
+zipkin:
+  tracing:
+    endpoint: http://localhost:9411/api/v2/spans
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId},%X{spanId}]"
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      cb-produits:
+        slidingWindowSize: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+      cb-commandes:
+        slidingWindowSize: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+      cb-inventaire:
+        slidingWindowSize: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
