@@ -99,3 +99,9 @@ resilience4j:
         slidingWindowSize: 5
         failureRateThreshold: 50
         waitDurationInOpenState: 10s
+keycloak:
+  registration:
+    client-id: registration-service
+    client-secret: ${6p4m4M6iRfWLUcPw6ychTi4Gl6jMd2nx5oZolTKApvigkAkrs3FBLRYs1kV2SUCQmCvN2PmCTmTjU72EdTzObE}
+    token-uri: http://localhost:8180/realms/tp-microservices/protocol/openid-connect/token
+    admin-uri: http://localhost:8180/admin/realms/tp-microservices
