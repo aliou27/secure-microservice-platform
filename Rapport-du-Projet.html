@@ -471,7 +471,7 @@ curl -s -X POST "http://localhost:8180/realms/tp-microservices/protocol/openid-c
 		<li>Avec ce token, elle appelle l'Admin API : <code>POST /admin/realms/tp-microservices/users</code> pour créer l'utilisateur.</li>
 		<li>Elle lui attribue ensuite le rôle de realm <code>ROLE_USER</code>.</li>
 	</ol>
-	<p>Le compte de service a reçu uniquement les rôles nécessaires du client <code>realm-management</code> : <code>manage-users</code>, <code>view-users</code>, <code>query-users</code> et <code>view-realm</code> (principe du moindre privilège).</p>
+	<p>Le compte de service a reçu uniquement les rôles nécessaires du client <code>realm-management</code> : <code>manage-users</code>, <code>view-users</code> et <code>view-realm</code> (principe du moindre privilège).</p>
 
 	<p><strong>Bug rencontré.</strong> Le premier utilisateur inscrit était bien créé (201), mais sa connexion échouait :</p>
 	<pre>

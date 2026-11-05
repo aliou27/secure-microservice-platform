@@ -40,7 +40,7 @@ flowchart LR
 - Java 21, Spring Boot 3.2, Spring Cloud 2023.0
 - Spring Security OAuth2 Resource Server (JWT)
 - Spring Cloud Gateway (reactive) with `TokenRelay`
-- Keycloak (realm roles, service accounts, Admin REST API)
+- Keycloak 26 (realm roles, service accounts, Admin REST API)
 - Consul service discovery with Spring Cloud LoadBalancer (`lb://`)
 - Resilience4j circuit breakers
 - Micrometer Tracing (Brave) and Zipkin
@@ -57,7 +57,7 @@ flowchart LR
 | `PUT /inventaire/{id}` | `ROLE_ADMIN` (`@PreAuthorize`) |
 | `POST /api/auth/register` | public |
 
-**Self-service registration.** `POST /api/auth/register` creates users in Keycloak through the Admin REST API. The gateway authenticates with a dedicated `registration-service` client (client credentials flow) whose service account only holds the roles it needs: `manage-users`, `view-users`, `query-users`, `view-realm`. New users automatically receive `ROLE_USER`.
+**Self-service registration.** `POST /api/auth/register` creates users in Keycloak through the Admin REST API. The gateway authenticates with a dedicated `registration-service` client (client credentials flow) whose service account only holds the roles it needs: `manage-users`, `view-users`, `view-realm`. New users automatically receive `ROLE_USER`.
 
 **Secret management.** No client secret lives in the code. Secrets are stored in `api-gateway/.env` (git-ignored) and loaded by Spring Boot at startup with `spring.config.import: optional:file:.env[.properties]`. Secrets that were exposed in an earlier commit have been rotated in Keycloak.
 
@@ -99,10 +99,10 @@ Sampling is set to 100% for development, so every request gets a trace ID create
 
 ### 1. Start the infrastructure
 
-First run:
+First run, from the project root:
 
 ```bash
-docker run -d --name keycloak -p 8180:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin quay.io/keycloak/keycloak:latest start-dev
+docker run -d --name keycloak -p 8180:8080 -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=admin -v "$PWD/keycloak:/opt/keycloak/data/import" quay.io/keycloak/keycloak:26.7.4 start-dev --import-realm
 docker run -d --name consul -p 8500:8500 hashicorp/consul agent -dev -client=0.0.0.0
 docker run -d --name zipkin -p 9411:9411 openzipkin/zipkin
 ```
@@ -113,25 +113,26 @@ Next runs:
 docker start keycloak consul zipkin
 ```
 
-### 2. Configure Keycloak
+Keycloak imports `keycloak/realm-export.json` on first start. The `tp-microservices` realm comes fully configured:
 
-In the admin console (`http://localhost:8180`):
+- realm roles `ROLE_USER` and `ROLE_ADMIN`
+- client `gateway-client` (confidential, direct access grants)
+- client `registration-service` (service account with `manage-users`, `view-users`, `view-realm`)
+- test users `alice` / `alice123` (`ROLE_USER`) and `bob` / `bob123` (`ROLE_USER`, `ROLE_ADMIN`)
 
-1. Create the realm `tp-microservices`.
-2. Create the realm roles `ROLE_USER` and `ROLE_ADMIN`.
-3. Create the client `gateway-client`: client authentication ON, direct access grants ON.
-4. Create the client `registration-service`: client authentication ON, service accounts ON. Then assign it the `realm-management` roles `manage-users`, `view-users`, `query-users` and `view-realm`.
-5. Create the test users (for example `alice` with `ROLE_USER`, and `bob` with `ROLE_USER` and `ROLE_ADMIN`), with first name, last name and a non-temporary password.
+The export contains no client secrets and no signing keys. Keycloak generates fresh ones on import.
 
-### 3. Add the secrets
+### 2. Add the secrets
 
-Copy the template and paste both client secrets from Keycloak (**Clients → Credentials**):
+Copy the template:
 
 ```bash
 cp api-gateway/.env.example api-gateway/.env
 ```
 
-### 4. Start the services
+Then, in the admin console (`http://localhost:8180`, admin / admin), open **Clients → gateway-client → Credentials** and **Clients → registration-service → Credentials**, and paste both secrets into `api-gateway/.env`.
+
+### 3. Start the services
 
 ```bash
 ./start-services.sh
@@ -139,7 +140,7 @@ cp api-gateway/.env.example api-gateway/.env
 
 After about a minute, the four services appear in Consul at `http://localhost:8500`.
 
-### 5. Try it
+### 4. Try it
 
 ```bash
 TOKEN=$(./get-token.sh alice alice123)
@@ -155,6 +156,7 @@ Access tokens expire after 5 minutes by default. Run `get-token.sh` again to get
 ## Project structure
 
 ```text
+keycloak/             Realm export (roles, clients, test users), imported at startup
 api-gateway/          Gateway, security config, fallbacks, registration (auth/)
 produit-service/      Products
 commande-service/     Orders
