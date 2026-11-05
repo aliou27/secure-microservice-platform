@@ -22,6 +22,15 @@
 		<li><a href="#8">Question Rapport - Q8: Microservice et SOA</a></li>
 		<li><a href="#9">Question Rapport - Q9: Service Discovery et Consul</a></li>
 		<li><a href="#10">Question Rapport - Q19: Observabilité et Tracing</a></li>
+		<li><a href="#11">Etape 5: Travaux complémentaires</a>
+			<ul>
+				<li><a href="#12">5.1 Gestion des secrets</a></li>
+				<li><a href="#13">5.2 Inscription d'utilisateurs via la Gateway</a></li>
+				<li><a href="#14">5.3 Tests de résilience (Circuit Breaker)</a></li>
+				<li><a href="#15">5.4 Cartographie des services dans Zipkin</a></li>
+				<li><a href="#16">5.5 Récapitulatif des tests</a></li>
+			</ul>
+		</li>
 	</ul>
 	
 	<br>
@@ -382,6 +391,188 @@ En production, on utilise généralement entre 1 % et 10 %.
     <li>Comparer avec des traces normales.</li>
     <li>Corréler avec les logs grâce au TraceId.</li>
 </ol>
+
+
+	<hr>
+
+	<h2 id="11">Etape 5: Travaux complémentaires</h2>
+	<p>Cette partie documente les fonctionnalités ajoutées et les tests réalisés après la première version du rapport : gestion des secrets, inscription d'utilisateurs via la Gateway, tests de résilience et cartographie des services dans Zipkin.</p>
+
+	<h3 id="12">5.1 Gestion des secrets</h3>
+
+	<p><strong>Problème constaté.</strong> Deux erreurs dans <code>api-gateway/src/main/resources/application.yaml</code> :</p>
+	<ul>
+		<li>Le secret du client <code>gateway-client</code> était écrit en clair dans le fichier, donc visible sur GitHub.</li>
+		<li>Le secret du client <code>registration-service</code> était placé directement entre <code>${...}</code>. Or pour Spring, <code>${NOM}</code> signifie « chercher une variable appelée NOM ». Spring cherchait donc une variable portant le nom du secret, ne la trouvait pas, et la Gateway refusait de démarrer :</li>
+	</ul>
+	<pre>
+Error creating bean with name 'authController'
+  -> Error creating bean with name 'keycloakRegistrationService'
+  -> Could not resolve placeholder '...' in value "${...}"
+	</pre>
+
+	<p><strong>Solution.</strong> Les secrets sont sortis du code et placés dans un fichier <code>api-gateway/.env</code>, ignoré par Git. Spring Boot lit ce fichier au démarrage grâce à <code>spring.config.import</code>, sans aucune variable à exporter dans le terminal.</p>
+
+	<p><code>application.yaml</code> (extrait) :</p>
+	<pre>
+spring:
+  application:
+    name: api-gateway
+  config:
+    import: optional:file:.env[.properties]
+  security:
+    oauth2:
+      client:
+        registration:
+          keycloak:
+            client-id: gateway-client
+            client-secret: ${GATEWAY_CLIENT_SECRET}
+
+keycloak:
+  registration:
+    client-id: registration-service
+    client-secret: ${REGISTRATION_SERVICE_SECRET}
+	</pre>
+
+	<p><code>api-gateway/.env</code> (non versionné, valeurs masquées) :</p>
+	<pre>
+GATEWAY_CLIENT_SECRET=********************************
+REGISTRATION_SERVICE_SECRET=********************************
+	</pre>
+
+	<p><code>.gitignore</code> :</p>
+	<pre>
+.idea/
+.env
+.DS_Store
+	</pre>
+
+	<p><strong>Rotation.</strong> Les anciens secrets restant visibles dans l'historique Git, ils ont été considérés comme compromis et régénérés dans Keycloak (<strong>Clients → Credentials → Regenerate</strong>) pour les deux clients. Seul le fichier <code>.env</code> local contient les nouvelles valeurs.</p>
+
+	<p><strong>Script d'obtention de token.</strong> Le script <code>get-token.sh</code> lit lui aussi le secret dans <code>.env</code>, ce qui évite de copier un secret dans une commande :</p>
+	<pre>
+#!/bin/bash
+source api-gateway/.env
+curl -s -X POST "http://localhost:8180/realms/tp-microservices/protocol/openid-connect/token" \
+  -d client_id=gateway-client \
+  -d client_secret="$GATEWAY_CLIENT_SECRET" \
+  -d grant_type=password \
+  -d username="$1" \
+  -d password="$2" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("access_token") or d)'
+	</pre>
+	<p>Utilisation : <code>TOKEN=$(./get-token.sh alice alice123)</code></p>
+
+	<h3 id="13">5.2 Inscription d'utilisateurs via la Gateway</h3>
+
+	<p>La Gateway expose un endpoint public <code>POST /api/auth/register</code> (autorisé sans token dans <code>SecurityConfig</code>). Il est implémenté par <code>AuthController</code>, <code>KeycloakRegistrationService</code> et <code>RegisterRequest</code>.</p>
+
+	<p><strong>Fonctionnement :</strong></p>
+	<ol>
+		<li>La Gateway s'authentifie auprès de Keycloak avec le compte de service du client <code>registration-service</code> (flux <em>client_credentials</em>).</li>
+		<li>Avec ce token, elle appelle l'Admin API : <code>POST /admin/realms/tp-microservices/users</code> pour créer l'utilisateur.</li>
+		<li>Elle lui attribue ensuite le rôle de realm <code>ROLE_USER</code>.</li>
+	</ol>
+	<p>Le compte de service a reçu uniquement les rôles nécessaires du client <code>realm-management</code> : <code>manage-users</code>, <code>view-users</code>, <code>query-users</code> et <code>view-realm</code> (principe du moindre privilège).</p>
+
+	<p><strong>Bug rencontré.</strong> Le premier utilisateur inscrit était bien créé (201), mais sa connexion échouait :</p>
+	<pre>
+{'error': 'invalid_grant', 'error_description': 'Account is not fully set up'}
+	</pre>
+	<p>Les versions récentes de Keycloak exigent un prénom et un nom pour chaque utilisateur (User Profile). L'inscription n'envoyait que le nom d'utilisateur, l'email et le mot de passe. <strong>Correction :</strong> ajout de <code>firstName</code> et <code>lastName</code> dans <code>RegisterRequest</code> et dans la requête envoyée à Keycloak, et <code>emailVerified: true</code> car aucun serveur mail n'est configuré dans ce TP.</p>
+
+	<p><strong>Test :</strong></p>
+	<pre>
+$ curl -i -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"david","email":"david@example.com","password":"david123","firstName":"David","lastName":"User"}'
+
+HTTP/1.1 201 Created
+User registered successfully
+
+$ TOKEN_DAVID=$(./get-token.sh david david123) && \
+  curl -i http://localhost:8080/api/produits -H "Authorization: Bearer $TOKEN_DAVID"
+
+HTTP/1.1 200 OK
+[{"prix":850000,"id":1,"nom":"Laptop"},{"prix":15000,"id":2,"nom":"Souris"},{"prix":25000,"id":3,"nom":"Clavier"}]
+	</pre>
+	<p>Le nouvel utilisateur s'inscrit, se connecte et accède aux produits avec le rôle <code>ROLE_USER</code> attribué automatiquement.</p>
+
+	<h3 id="14">5.3 Tests de résilience (Circuit Breaker)</h3>
+
+	<p>Le circuit breaker <code>cb-produits</code> (Resilience4j) protège la route <code>/api/produits/**</code>. Configuration : fenêtre de 5 appels, seuil d'échec 50 %, attente de 10 s en état ouvert.</p>
+	<ul>
+		<li><strong>CLOSED</strong> : les requêtes passent normalement.</li>
+		<li><strong>OPEN</strong> : après trop d'échecs, la Gateway n'appelle plus le service et renvoie directement le fallback.</li>
+		<li><strong>HALF_OPEN</strong> : après 10 s, quelques requêtes test passent. Si elles réussissent, le circuit se referme.</li>
+	</ul>
+
+	<p><strong>Test 1 : arrêt du Service Produits.</strong> Le service est arrêté avec <code>kill $(lsof -ti :8082)</code>, puis la route est appelée plusieurs fois via la Gateway. Chaque appel renvoie <strong>503</strong> avec le message de fallback, au lieu d'une erreur brute ou d'un timeout.</p>
+	<img src="images/32.png" width="700">
+
+	<p><strong>Test 2 : isolation de la panne.</strong> Pendant que le Service Produits est arrêté, <code>/api/commandes</code> répond toujours <strong>200</strong>. La panne d'un service ne se propage pas aux autres.</p>
+	<p><strong>Test 3 : rétablissement.</strong> Après le redémarrage du Service Produits, <code>/api/produits</code> répond de nouveau <strong>200</strong>. Le circuit est repassé en état CLOSED sans intervention manuelle.</p>
+	<img src="images/33.png" width="700">
+
+	<h3 id="15">5.4 Cartographie des services dans Zipkin</h3>
+
+	<p>Des requêtes ont été envoyées vers les trois routes de la Gateway, puis la page <strong>Dependencies</strong> de Zipkin a été ouverte (<code>http://localhost:9411</code>). Zipkin reconstruit automatiquement la carte des appels à partir des traces réelles : la Gateway appelle les trois services.</p>
+	<img src="images/34.png" width="700">
+	<p>Chaque requête reçoit un <strong>traceId</strong> créé par la Gateway et propagé aux services dans les en-têtes HTTP. Chaque étape (span) est chronométrée, ce qui permet de voir le chemin complet d'une requête et d'identifier le service lent ou en erreur.</p>
+
+	<h3 id="16">5.5 Récapitulatif des tests</h3>
+	<table border="1" cellpadding="6">
+		<tr>
+			<th>Objectif</th>
+			<th>Test</th>
+			<th>Résultat</th>
+		</tr>
+		<tr>
+			<td>Authentification</td>
+			<td>GET /api/produits sans token / avec token valide</td>
+			<td>401 / 200</td>
+		</tr>
+		<tr>
+			<td>Validation JWT</td>
+			<td>Token invalide ou expiré</td>
+			<td>401</td>
+		</tr>
+		<tr>
+			<td>Autorisation par rôle</td>
+			<td>PUT /api/inventaire/1 par alice (ROLE_USER) / bob (ROLE_ADMIN)</td>
+			<td>403 / 200</td>
+		</tr>
+		<tr>
+			<td>Routage Gateway</td>
+			<td>/api/produits, /api/commandes, /api/inventaire</td>
+			<td>200</td>
+		</tr>
+		<tr>
+			<td>Service discovery</td>
+			<td>Services enregistrés dans Consul</td>
+			<td>4 services</td>
+		</tr>
+		<tr>
+			<td>Circuit breaker</td>
+			<td>Service Produits arrêté / Commandes pendant la panne / après redémarrage</td>
+			<td>503 fallback / 200 / 200</td>
+		</tr>
+		<tr>
+			<td>Tracing distribué</td>
+			<td>Carte Dependencies dans Zipkin</td>
+			<td>Gateway vers 3 services</td>
+		</tr>
+		<tr>
+			<td>Inscription</td>
+			<td>POST /api/auth/register puis connexion</td>
+			<td>201 / 200</td>
+		</tr>
+		<tr>
+			<td>Gestion des secrets</td>
+			<td>Secrets dans .env ignoré par Git, puis régénérés</td>
+			<td>Aucun secret dans le code</td>
+		</tr>
+	</table>
+
 
 </body>
 </html>
