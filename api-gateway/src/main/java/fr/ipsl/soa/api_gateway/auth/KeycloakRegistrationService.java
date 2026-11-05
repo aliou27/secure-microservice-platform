@@ -74,8 +74,10 @@ public class KeycloakRegistrationService {
         Map<String, Object> user = Map.of(
                 "username", request.username(),
                 "email", request.email(),
+                "firstName", request.firstName(),
+                "lastName", request.lastName(),
                 "enabled", true,
-                "emailVerified", false,
+                "emailVerified", true,
                 "credentials", List.of(credential)
         );
 
