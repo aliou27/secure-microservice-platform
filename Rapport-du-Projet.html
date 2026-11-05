@@ -1,16 +1,15 @@
-<DOCTYPE html>
 <!DOCTYPE html>
 <html>
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Rapport du projet TP Keyloak</title>
+	<title>Rapport du projet TP Keycloak</title>
 </head>
 <body>
 
 
 	<strong>Aliou Ba, ing 2 informatique, P33 2</strong>
-	<p>Voici le sommaire du </p>
+	<p>Voici le sommaire du rapport</p>
 	<ul>
 		<li><a href="#33">Question Rapport - Q1: Comprendre OAuth2</a></li>
 		<li><a href="#2">Question Rapport - Q2: Keycloak et JWT</a></li>
@@ -18,10 +17,10 @@
 		<li><a href="#4">Question Rapport - Q4: API Gateway et securite</a></li>
 		<li><a href="#5">Question Rapport - Q5: Question de synthèse du rapport</a></li>
 		<li><a href="#6">Question Rapport - Q6: Architecture et securite</a></li>
-		<li><a href="#7">Question Rapport - Q7: Keycloak en profendeur</a></li>
+		<li><a href="#7">Question Rapport - Q7: Keycloak en profondeur</a></li>
 		<li><a href="#8">Question Rapport - Q8: Microservice et SOA</a></li>
 		<li><a href="#9">Question Rapport - Q9: Service Discovery et Consul</a></li>
-		<li><a href="#10">Question Rapport - Q19: Observabilité et Tracing</a></li>
+		<li><a href="#10">Question Rapport - Q10: Observabilité et Tracing</a></li>
 		<li><a href="#11">Etape 5: Travaux complémentaires</a>
 			<ul>
 				<li><a href="#12">5.1 Gestion des secrets</a></li>
@@ -75,7 +74,7 @@
 		</li>
 	</ol>
 
-	<h2 id="3"><bold>Q3</bold> Sécurité des Services</h2>
+	<h2 id="3"><strong>Q3</strong> Sécurité des Services</h2>
 	<ol>
 		<li>
 			<p>Spring Security intercepte la requête avant qu'elle atteigne le contrôleur. <br> Comme aucun token JWT n'est présent dans l'en-tête Authorization, le filtre OAuth2 Resource Server rejette la requête immédiatement avec un 401.</p>
@@ -108,7 +107,7 @@
 
 				<li>Gateway : valide la signature du JWT (clé publique Keycloak), vérifie que l'utilisateur est authentifié → OK</li>
 
-				<li>Gateway → Service Inventaire (:8083) : filtre TokenRelay propage le token, StripPrefix transforme /api/inventaire/1 en /inventaire/1</li>
+				<li>Gateway → Service Inventaire (:8084) : filtre TokenRelay propage le token, StripPrefix transforme /api/inventaire/1 en /inventaire/1</li>
 
 				<li>Service Inventaire : valide à nouveau le JWT, vérifie hasRole('USER') → OK, puis @PreAuthorize("hasRole('ADMIN')") → Bob a ROLE_ADMIN → OK </li>
 
@@ -118,7 +117,7 @@
 	</ol>
 
 
-	<h2 id="5">Etape 4: Scenarios de test complets</h2>
+	<h2 id="etape4">Etape 4: Scenarios de test complets</h2>
 	<h3>7.1 Démarrage de tous les composants</h3>
 	<p>Je démarre tous les composants directement sur intellij</p>
 	<img src="images/19.png" width="450" height="100" >
@@ -158,7 +157,7 @@
 			curl -v http://localhost:8080/api/produits
 
 			# Appel direct au service (sans Gateway) — aussi 401 mais indépendamment
-			curl -v http://localhost:8081/produits
+			curl -v http://localhost:8082/produits
 			</pre>
 
 			<p>Les logs du <strong>Service Produits</strong> ne montrent aucune requête reçue lors du scénario D via Gateway.</p>
@@ -208,7 +207,7 @@
 		Ne jamais mettre dans un JWT : mot de passe, numéro de carte bancaire, données médicales, informations personnelles sensibles (RGPD). On y met uniquement : identifiant utilisateur, rôles, email — des données non sensibles nécessaires à l'autorisation.</li>
 	</ol>
 
-	<h2>Keycloak en profondeur</h2>
+	<h2 id="7">Keycloak en profondeur</h2>
 	<ol>
 		<li>
 			Realm role : global à tout le realm, visible par tous les clients. Ex: ROLE_USER, ROLE_ADMIN dans ce TP.<br>
@@ -236,7 +235,7 @@
 		</li>
 	</ol>
 
-	<h2>Q8  Microservices et SOA</h2>
+	<h2 id="8">Q8  Microservices et SOA</h2>
 
 <h3>Q8.1 Comparaison avec le TP précédent (SOA + GraphQL)</h3>
 
@@ -261,7 +260,7 @@ Le Service Inventaire publie un événement et le Service Produits le consomme l
 <h3>Q8.3 Intégrer un Service Notifications</h3>
 
 <ul>
-    <li>Port : 8084</li>
+    <li>Port : 8085</li>
     <li>Sécurité : OAuth2 Resource Server avec ROLE_USER</li>
     <li>Communication : Kafka ou RabbitMQ</li>
     <li>Enregistrement dans Consul : service-notifications</li>
@@ -290,7 +289,7 @@ Dans une architecture microservices, chaque service expose potentiellement son p
 C'est pourquoi chaque service doit valider le JWT même si la Gateway l'a déjà vérifié.
 </p>
 
-<h2>Q9 Service Discovery et Consul</h2>
+<h2 id="9">Q9 Service Discovery et Consul</h2>
 
 <h3>Q9.1 Client-side vs Server-side discovery ?</h3>
 
@@ -335,7 +334,7 @@ selon la configuration du health check.
     <li>Aucune URL codée en dur.</li>
 </ul>
 
-<h2>Q10 Observabilité et Tracing</h2>
+<h2 id="10">Q10 Observabilité et Tracing</h2>
 
 <h3>Q10.1 Log vs Métrique vs Trace</h3>
 
